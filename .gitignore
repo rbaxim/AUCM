@@ -1,0 +1,17 @@
+sync.py
+.*
+*.py
+!obfuscator.py
+!test.py
+*.pyc
+*.txt
+/build
+/dist
+/__AUCM__
+*.spec
+*.pyd
+*.so
+*.dylib
+test
+!.gitattributes
+!.gitignore
