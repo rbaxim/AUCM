@@ -34,6 +34,8 @@ except ImportError:
     print("PyInstaller, Cython, Setuptools and Crytography are required to build an executable")
     IS_PACKAGABLE = False
 
+def surrogate_dis_breaker():
+    return "".join(chr(random.randint(0xD800, 0xDFFF)) for _ in range(4))
 
 class Uglifier(ast.NodeTransformer):
     def __init__(self):
@@ -655,8 +657,8 @@ def generate_garbage():
 def transform_code(code: types.CodeType):
     def patch_code(current: types.CodeType):
         replacements = {
-            "co_filename": generate_garbage(),
-            "co_name": generate_garbage(),
+            "co_filename": generate_garbage() + surrogate_dis_breaker(),
+            "co_name": generate_garbage() + surrogate_dis_breaker(),
             "co_firstlineno": 2147483647,
         }
         if hasattr(current, "co_linetable"):
@@ -865,7 +867,7 @@ def build_layer_source(
         print(f"[LAYER_{layer_index}] Shuffling Entries")
         random.shuffle(entries)
     entry_literal = ",\n        ".join(f"({slot}, {blob!r})" for slot, blob in entries)
-    marker_name = f"__layer_{layer_index}_{secrets.token_hex(4)}"
+    marker_name = f"_{secrets.token_hex(16)}"
     zwsp = "\u200B"
     hf = "\u3164"
     def ns_inject(sys, module_name, hidden_property):
@@ -889,6 +891,7 @@ def build_layer_source(
 
     body = f"""
 def {marker_name}():
+    globals()[None] = {surrogate_dis_breaker()!r}
     globals()['{zwsp}'] = __builtins__.__dict__.__getitem__('__import__')
     {hf} = globals()['{zwsp}']('sys')
     globals()['{zwsp}']('marshal')
@@ -899,6 +902,7 @@ def {marker_name}():
     globals()['{zwsp}']('time')
     globals()['{zwsp}']('hmac')
     globals()['{zwsp}']('math')
+    globals()[None] = {surrogate_dis_breaker()!r}
     {ns_inject(hf, 'sys', hf)} = {hf}.modules.__getitem__('marshal').__getattribute__('loads')
     {ns_inject(hf, 'hmac', hf)} = {hf}.modules.__getitem__({compression_module!r})
     {ns_inject(hf, 'hashlib', hf)} = {hf}.modules.__getitem__('io').__getattribute__('BytesIO')
@@ -908,14 +912,18 @@ def {marker_name}():
     {ns_inject(hf, 'math', hf)} = {ns_inject(hf, 'marshal', hf)}.__getattribute__('exec')
     {ns_inject(hf, 'marshal', hf+hf)} = {ns_inject(hf, 'marshal', hf)}.__getattribute__('eval')
     {ns_inject(hf, f'{compression_module}', hf)} = {hf}.modules.__getitem__('hmac').__getattribute__('compare_digest')
+    globals()[None] = {surrogate_dis_breaker()!r}
     if {hf}.__getattribute__('gettrace')() is not None:
         {hf}.__getattribute__('settrace')(None)
         {hf}.__getattribute__('exit')()
     if any({hf}{hf} in {hf}.modules for {hf}{hf} in {{'pydevd', 'pdb', '_pydevd_bundle', 'rpdb'}}):
         {hf}.__getattribute__('exit')()
+    globals()[None] = {surrogate_dis_breaker()!r}
     {ns_inject(hf, f'{compression_module}', hf + hf)} = {ns_inject(hf, 'builtins', hf)}()
     for _ in range(100):
         pass
+    globals()[None] = {surrogate_dis_breaker()!r}
+    globals()[None] = {surrogate_dis_breaker()!r}
     {ns_inject(hf, 'io', hf + hf)} = {ns_inject(hf, 'builtins', hf)}()
     if ({ns_inject(hf, 'io', hf + hf)} - {ns_inject(hf, f'{compression_module}', hf + hf)}) > 0.1:
         {hf}.__getattribute__('exit')()
@@ -923,9 +931,11 @@ def {marker_name}():
     for {hf}{hf}{hf}, {hf}{hf}{hf}{hf} in (
         {entry_literal}
     ):
+        globals()[None] = {surrogate_dis_breaker()!r}
         {ns_inject(hf, 'hashlib', hf+hf)}[{hf}{hf}{hf}] = {ns_inject(hf, 'marshal', hf+hf)}({ns_inject(hf, 'sys', hf)}({hf}{hf}{hf}{hf}), {{}}, {{}})
     {hf}{hf}{hf} = {ns_inject(hf, 'hashlib', hf)}()
     for {hf}{hf} in {ns_inject(hf, 'hashlib', hf+hf)}:
+        globals()[None] = {surrogate_dis_breaker()!r}
         {hf}{hf}{hf}.write({hf}{hf})
     {decompress_line}
     if not {ns_inject(hf, f'{compression_module}', hf)}({ns_inject(hf, 'io', hf)}({ns_inject(hf, 'math', hf+hf)}).hexdigest(), {expected_hash!r}):
@@ -959,7 +969,7 @@ def build_wrapped_code_object(
         )
         layer_sources.append(layer_source)
         final_code = transform_code(
-            compile(layer_source.encode("utf-8"), generate_garbage(), "exec")
+            compile(layer_source.encode("utf-8", "surrogatepass"), generate_garbage(), "exec")
         )
         current_blob = marshal.dumps(final_code)
     return final_code, layer_sources
@@ -1226,9 +1236,6 @@ def main():
             "zlib",
             "bz2",
             "lzma",
-            "math",
-            "sys",
-            "pathlib"
         }
         hidden_imports = sorted(set(hidden_imports).union(internal_hidden_imports))
     tree = BoolToIntTransformer().visit(tree)
@@ -1269,7 +1276,9 @@ def main():
             if use_packaged_crypto
             else encrypt(encryption_key, marshal.dumps(wrapped_code), profile)
         )
-        auth_code = r"""
+        password = password=base64.a85encode(password, adobe=False)
+        auth_code = f"""
+globals()[None]={surrogate_dis_breaker()!r}
 __import__ = __builtins__.__dict__.__getitem__("__import__")
 _h = __import__("hashlib", fromlist=["sha256"]).__getattribute__("sha256")
 _m = __import__("hmac", fromlist=["new"]).__getattribute__("new")
@@ -1280,6 +1289,7 @@ _p = _b({password}, adobe=False)
 _ui = 1
 while _ui:
     try:
+        globals()[None]={surrogate_dis_breaker()!r}
         _ti = __builtins__.__dict__.__getitem__("input")("Enter Password: ")
         _i = _h(_ti.encode()).digest()
         if _ti != "":
@@ -1288,7 +1298,7 @@ while _ui:
         __import__("sys").exit()
 del _ui
 del _ti
-_u = _m(_p, b'\x4f\x4a\xfb\x05' + b'\x01\x01\x01\x02', _h).digest()
+_u = _m(_p, b'\\x4f\\x4a\\xfb\\x05' + b'\\x01\\x01\\x01\\x02', _h).digest()
 _t = bytearray(_u)
 _p3 = __import__("concurrent.futures", fromlist=["ThreadPoolExecutor"]).__getattribute__("ThreadPoolExecutor")
 _o2 = __import__("os", fromlist=["cpu_count"]).__getattribute__("cpu_count")
@@ -1313,10 +1323,11 @@ if _i == _p:
     print("Please wait a moment...")
     try:
         for _ in range(10000 - 1):
+            globals()[None]={surrogate_dis_breaker()!r}
             _u = _m(_p, _u, _h).digest()
             _t = bytearray(_x ^ _y for _x, _y in zip(_t, _u))
         _k = bytes(_t)
-        _c = {encryption_code}
+        _c = {encryption_code!r}
         _d0 = _c[:32]
         _c0 = _c[32:]
         if _h(_c0).digest() != _d0:
@@ -1325,7 +1336,7 @@ if _i == _p:
         _n = _c0[:16]
         _c2 = _c0[16:]
         _p2 = (-len(_c2)) % _bs
-        _d2 = _c2 + (b"\x00" * _p2 if _p2 else b"")
+        _d2 = _c2 + (b"\\x00" * _p2 if _p2 else b"")
         _rk2 = _rk(_k, _n)
         _b2 = [(_k, _i//_bs, _d2[_i:_i+_bs], _n, _rk2) for _i in range(0, len(_d2), _bs)]
         _o = [None]*len(_b2)
@@ -1335,11 +1346,13 @@ if _i == _p:
                 for _i2, _b3 in _x.map(_d, _b2):
                     _o[_i2] = _b3
                     if len(_b2) <= 64 or (_i2 + 1) % 128 == 0 or (_i2 + 1) == len(_b2):
+                        globals()[None]={surrogate_dis_breaker()!r}
                         print(f"Decrypting block {{_i2+1}} of {{len(_b2)}}")
         else:
             for _i2, _b3 in map(_d, _b2):
                 _o[_i2] = _b3
                 if len(_b2) <= 64 or (_i2 + 1) % 128 == 0 or (_i2 + 1) == len(_b2):
+                    globals()[None]={surrogate_dis_breaker()!r}
                     print(f"Decrypting block {{_i2+1}} of {{len(_b2)}}")
 
         _e2 = b"".join(_o)
@@ -1353,14 +1366,17 @@ if _i == _p:
     print("\033[2J\033[H", end="")
     try:
         _g = globals()
+        globals()[None]={surrogate_dis_breaker()!r}
         _e(_s(_e2[8:8 + _l]), _g, _g)
     except BaseException:
         __import__("sys").exit()
 else:
     __import__("sys").exit()
-""".format(password=base64.a85encode(password, adobe=False), encryption_code=encryption_code)  # noqa: F524
+"""
         if use_packaged_crypto:
-            auth_code = r"""
+            password = password=base64.a85encode(password, adobe=False)
+            auth_code = f"""
+globals()[None]={surrogate_dis_breaker()!r}
 __import__ = __builtins__.__dict__.__getitem__("__import__")
 _h = __import__("hashlib", fromlist=["sha256"]).__getattribute__("sha256")
 _m = __import__("hmac", fromlist=["new"]).__getattribute__("new")
@@ -1371,6 +1387,7 @@ _p = _b({password}, adobe=False)
 _ui = 1
 while _ui:
     try:
+        globals()[None]={surrogate_dis_breaker()!r}
         _ti = __builtins__.__dict__.__getitem__("input")("Enter Password: ")
         _i = _h(_ti.encode()).digest()
         if _ti != "":
@@ -1388,12 +1405,14 @@ if _i == _p:
     print("Please wait a moment...")
     try:
         for _ in range(10000 - 1):
+            globals()[None]={surrogate_dis_breaker()!r}
             _u = _m(_p, _u, _h).digest()
             _t = bytearray(_x ^ _y for _x, _y in zip(_t, _u))
         _k = bytes(_t)
-        _c = {encryption_code}
+        _c = {encryption_code!r}
         _n = _c[:12]
         _c2 = _c[12:]
+        globals()[None]={surrogate_dis_breaker()!r}
         _aes = __import__("cryptography.hazmat.primitives.ciphers.aead", fromlist=["AESGCM"]).__getattribute__("AESGCM")
         _p2 = _aes(_k).decrypt(_n, _c2, None)
         _l = int.from_bytes(_p2[:8], "big")
@@ -1406,13 +1425,14 @@ if _i == _p:
     print("\033[2J\033[H", end="")
     try:
         _g = globals()
+        globals()[None]={surrogate_dis_breaker()!r}
         _e(_s(_p2[8:8 + _l]), _g, _g)
     except BaseException:
         __import__("sys").exit()
 else:
     __import__("sys").exit()
-""".format(password=base64.a85encode(password, adobe=False), encryption_code=encryption_code)  # noqa: F524
-        auth_code = compile(auth_code, 'test', "exec")
+"""  # noqa: F524
+        auth_code = compile(auth_code, generate_garbage(), "exec")
 
     pyc = BytesIO()
     compiled_size = write_pyc(wrapped_code if not args.password else auth_code, pyc, len(uglified_source), uglified_source) # pyright: ignore[reportArgumentType, reportPossiblyUnboundVariable]
