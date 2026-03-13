@@ -1,0 +1,18 @@
+[tool.uv]
+managed = true
+
+[project]
+name = "AUCM"
+version = "1.0.0"
+description = "Are you challenging me?"
+requires-python = ">=3.12, <3.14"
+dependencies = [
+    "altgraph==0.17.5",
+    "cffi==2.0.0",
+    "cryptography==46.0.5",
+    "packaging==26.0",
+    "pycparser==3.0",
+    "pyinstaller==6.19.0",
+    "pyinstaller-hooks-contrib==2026.3",
+    "setuptools==82.0.1",
+]
