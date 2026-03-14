@@ -29,22 +29,26 @@ jobs:
 
       - name: PYC mode
         run: |
+          uv sync --frozen
           uv run python obfuscator.py test.py test.pyc --pyc
           uv run python test.pyc
 
       - name: EXE mode
         run: |
+          uv sync --frozen
           uv run python obfuscator.py test.py test
           chmod +x test
           ./test
 
       - name: PYC mode (password protected)
         run: |
+          uv sync --frozen
           uv run python obfuscator.py test.py test.pyc --pyc --password "testpass"
           printf "testpass\n" | uv run python test.pyc
 
       - name: EXE mode (password protected)
         run: |
+          uv sync --frozen
           uv run python obfuscator.py test.py test --password "testpass"
           chmod +x test
           printf "testpass\n" | ./test
