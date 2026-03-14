@@ -1,0 +1,50 @@
+name: Obfuscator tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  obfuscator-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y build-essential python3-dev
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: PYC mode
+        run: |
+          uv run python obfuscator.py test.py test.pyc --pyc
+          uv run python test.pyc
+
+      - name: EXE mode
+        run: |
+          uv run python obfuscator.py test.py test
+          chmod +x test
+          ./test
+
+      - name: PYC mode (password protected)
+        run: |
+          uv run python obfuscator.py test.py test.pyc --pyc --password "testpass"
+          printf "testpass\n" | uv run python test.pyc
+
+      - name: EXE mode (password protected)
+        run: |
+          uv run python obfuscator.py test.py test --password "testpass"
+          chmod +x test
+          printf "testpass\n" | ./test
