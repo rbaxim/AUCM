@@ -8,10 +8,6 @@ This project does not currently publish formal release versions. Security fixes 
 
 ## Reporting A Vulnerability
 
-Please use one of the following:
-- Open a private security advisory (if the hosting platform supports it).
-- If private reporting is not available, open an issue with the minimum details needed to reproduce and ask for a private follow‑up channel.
-
 Include:
 - A clear description of the issue and impact.
 - Steps to reproduce.
