@@ -2,6 +2,7 @@
 import os
 import struct
 import sys
+from importlib.machinery import ModuleSpec
 try:
     __AUCM__
 except BaseException:
@@ -95,7 +96,7 @@ try:
 
     step = "3c"
     print("3c. __spec__ test")
-    if __name__ == "__main__" and __spec__ is not None:
+    if __name__ == "__main__" and __spec__ is not None or isinstance(__spec__, ModuleSpec):
         print(f"__spec__ is not None for __main__: {__spec__}")
         errors.append(step)
     else:

@@ -10,6 +10,7 @@ dependencies = [
     "altgraph==0.17.5",
     "cffi==2.0.0",
     "cryptography==46.0.5",
+    "cython==3.2.4",
     "packaging==26.0",
     "pycparser==3.0",
     "pyinstaller==6.19.0",

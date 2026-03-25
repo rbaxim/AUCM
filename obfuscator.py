@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 rbaxim
+# Licensed under the Apache License, Version 2.0
+# See LICENSE file in the project root for details
 """
 AUCM (Stands for "Are you challenging me?"). Python's Best friend. But very mean to anyone who hurts python or decides to snoop on python.
 """
@@ -25,6 +29,7 @@ import hashlib
 import hmac
 import base64
 import importlib.util
+import pickle
 try:
     IS_PACKAGABLE = True
     from setuptools import Extension, setup
@@ -36,6 +41,9 @@ except ImportError:
 
 def surrogate_dis_breaker():
     return "".join(chr(random.randint(0xD800, 0xDFFF)) for _ in range(4))
+
+def generate_invisible_character():
+    return "".join(chr(random.randint(0xFE00, 0xFE0F)) for _ in range(4))
 
 class Uglifier(ast.NodeTransformer):
     def __init__(self):
@@ -177,7 +185,7 @@ class Uglifier(ast.NodeTransformer):
         if isinstance(node.target, ast.Name):
             key = self._get_or_create_key(node.target.id)
             if key:
-                node.target = self._make_store_target(key, is_global_scope)
+                node.target = self._make_store_target(key, is_global_scope) # pyright: ignore[reportAttributeAccessIssue]
         return node
 
     def visit_For(self, node):
@@ -867,30 +875,69 @@ def build_layer_source(
         print(f"[LAYER_{layer_index}] Shuffling Entries")
         random.shuffle(entries)
     entry_literal = ",\n        ".join(f"({slot}, {blob!r})" for slot, blob in entries)
+    if len(entries) == 1:
+        entry_literal += ","
     marker_name = f"_{secrets.token_hex(16)}"
-    zwsp = "\u200B"
+    zwsp = generate_invisible_character()
     hf = "\u3164"
+    namespaces = [
+        'marshal',
+        'io',
+        'hashlib',
+        'builtins',
+        'sys',
+        'hmac',
+        'math',
+    ]
     def ns_inject(sys, module_name, hidden_property):
         return f"{sys}.__getattribute__('modules').__getitem__({module_name!r}).{hidden_property}"
     print(f"[LAYER_{layer_index}] Marker Name: {marker_name}")
     if algo in ("zlib", "zlib_raw"):
         compression_module = "zlib"
-        if algo == "zlib_raw":
-            decompress_line = f"{ns_inject(hf, 'math', hf+hf)} = {ns_inject(hf, 'hmac', hf)}.decompress({hf}{hf}{hf}.getvalue(), -15)"
-        else:
-            decompress_line = f"{ns_inject(hf, 'math', hf+hf)} = {ns_inject(hf, 'hmac', hf)}.decompress({hf}{hf}{hf}.getvalue())"
     elif algo == "bz2":
         compression_module = "bz2"
-        decompress_line = f"{ns_inject(hf, 'math', hf+hf)} = {ns_inject(hf, 'hmac', hf)}.decompress({hf}{hf}{hf}.getvalue())"
     elif algo == "lzma":
         compression_module = "lzma"
-        decompress_line = f"{ns_inject(hf, 'math', hf+hf)} = {ns_inject(hf, 'hmac', hf)}.decompress({hf}{hf}{hf}.getvalue())"
     else:
         compression_module = "zlib"
-        decompress_line = f"{ns_inject(hf, 'math', hf+hf)} = {ns_inject(hf, 'hmac', hf)}.decompress({hf}{hf}{hf}.getvalue())"
+    namespaces.append(compression_module)
+    if profile["shuffle_entries"]:
+        random.shuffle(namespaces)
+    ns_variables = {
+        "loads": ns_inject(hf, namespaces[0], hf),
+        "decompress": ns_inject(hf, namespaces[1], hf),
+        "BytesIO": ns_inject(hf, namespaces[2], hf),
+        "SHA256": ns_inject(hf, namespaces[3], hf),
+        "builtins": ns_inject(hf, namespaces[4], hf),
+        "perf_counter": ns_inject(hf, namespaces[5], hf),
+        "exec": ns_inject(hf, namespaces[6], hf),
+        "eval": ns_inject(hf, namespaces[6], hf+hf),
+        "compare_digest": ns_inject(hf, namespaces[7], hf),
+        "perf_start": ns_inject(hf, namespaces[1], hf+hf),
+        "perf_end": ns_inject(hf, namespaces[1], hf+hf+hf),
+        "chunks": ns_inject(hf, namespaces[2], hf+hf),
+        "slot": hf+hf+hf,
+        "blob": hf+hf+hf+hf,
+        "chunk": hf+hf,
+        "decompressed_blob": ns_inject(hf, namespaces[5], hf+hf)
+    }
+    if algo in ("zlib", "zlib_raw"):
+        if algo == "zlib_raw":
+            decompress_line = f"{ns_variables['decompressed_blob']} = {ns_variables["decompress"]}.decompress({hf}{hf}{hf}.getvalue(), -15)"
+        else:
+            decompress_line = f"{ns_variables['decompressed_blob']} = {ns_variables["decompress"]}.decompress({hf}{hf}{hf}.getvalue())"
+    elif algo == "bz2":
+        decompress_line = f"{ns_variables['decompressed_blob']} = {ns_variables["decompress"]}.decompress({hf}{hf}{hf}.getvalue())"
+    elif algo == "lzma":
+        decompress_line = f"{ns_variables['decompressed_blob']} = {ns_variables["decompress"]}.decompress({hf}{hf}{hf}.getvalue())"
+    else:
+        decompress_line = f"{ns_variables['decompressed_blob']} = {ns_variables["decompress"]}.decompress({hf}{hf}{hf}.getvalue())"
+        
+    
 
     body = f"""
 def {marker_name}():
+    
     globals()[None] = {surrogate_dis_breaker()!r}
     globals()['{zwsp}'] = __builtins__.__dict__.__getitem__('__import__')
     {hf} = globals()['{zwsp}']('sys')
@@ -903,15 +950,15 @@ def {marker_name}():
     globals()['{zwsp}']('hmac')
     globals()['{zwsp}']('math')
     globals()[None] = {surrogate_dis_breaker()!r}
-    {ns_inject(hf, 'sys', hf)} = {hf}.modules.__getitem__('marshal').__getattribute__('loads')
-    {ns_inject(hf, 'hmac', hf)} = {hf}.modules.__getitem__({compression_module!r})
-    {ns_inject(hf, 'hashlib', hf)} = {hf}.modules.__getitem__('io').__getattribute__('BytesIO')
-    {ns_inject(hf, 'io', hf)} = {hf}.modules.__getitem__('hashlib').__getattribute__('sha256')
-    {ns_inject(hf, 'marshal', hf)} = {hf}.modules.__getitem__('builtins')
-    {ns_inject(hf, 'builtins', hf)} = {hf}.modules.__getitem__('time').__getattribute__('perf_counter')
-    {ns_inject(hf, 'math', hf)} = {ns_inject(hf, 'marshal', hf)}.__getattribute__('exec')
-    {ns_inject(hf, 'marshal', hf+hf)} = {ns_inject(hf, 'marshal', hf)}.__getattribute__('eval')
-    {ns_inject(hf, f'{compression_module}', hf)} = {hf}.modules.__getitem__('hmac').__getattribute__('compare_digest')
+    {ns_variables["loads"]} = {hf}.modules.__getitem__('marshal').__getattribute__('loads')
+    {ns_variables["decompress"]} = {hf}.modules.__getitem__({compression_module!r})
+    {ns_variables["BytesIO"]} = {hf}.modules.__getitem__('io').__getattribute__('BytesIO')
+    {ns_variables["SHA256"]} = {hf}.modules.__getitem__('hashlib').__getattribute__('sha256')
+    {ns_variables["builtins"]} = {hf}.modules.__getitem__('builtins')
+    {ns_variables["perf_counter"]} = {hf}.modules.__getitem__('time').__getattribute__('perf_counter')
+    {ns_variables["exec"]} = {ns_variables["builtins"]}.__getattribute__('exec')
+    {ns_variables["eval"]} = {ns_variables["builtins"]}.__getattribute__('eval')
+    {ns_variables["compare_digest"]} = {hf}.modules.__getitem__('hmac').__getattribute__('compare_digest')
     globals()[None] = {surrogate_dis_breaker()!r}
     if {hf}.__getattribute__('gettrace')() is not None:
         {hf}.__getattribute__('settrace')(None)
@@ -919,29 +966,29 @@ def {marker_name}():
     if any({hf}{hf} in {hf}.modules for {hf}{hf} in {{'pydevd', 'pdb', '_pydevd_bundle', 'rpdb'}}):
         {hf}.__getattribute__('exit')()
     globals()[None] = {surrogate_dis_breaker()!r}
-    {ns_inject(hf, f'{compression_module}', hf + hf)} = {ns_inject(hf, 'builtins', hf)}()
+    {ns_variables["perf_start"]} = {ns_variables["perf_counter"]}()
     for _ in range(100):
         pass
     globals()[None] = {surrogate_dis_breaker()!r}
     globals()[None] = {surrogate_dis_breaker()!r}
-    {ns_inject(hf, 'io', hf + hf)} = {ns_inject(hf, 'builtins', hf)}()
-    if ({ns_inject(hf, 'io', hf + hf)} - {ns_inject(hf, f'{compression_module}', hf + hf)}) > 0.1:
+    {ns_variables["perf_end"]} = {ns_variables["perf_counter"]}()
+    if ({ns_variables["perf_end"]} - {ns_variables["perf_start"]}) > 0.1:
         {hf}.__getattribute__('exit')()
-    {ns_inject(hf, 'hashlib', hf+hf)} = [b''] * {len(chunks)}
-    for {hf}{hf}{hf}, {hf}{hf}{hf}{hf} in (
+    {ns_variables["chunks"]} = [b''] * {len(chunks)}
+    for {ns_variables["slot"]}, {ns_variables["blob"]} in (
         {entry_literal}
     ):
         globals()[None] = {surrogate_dis_breaker()!r}
-        {ns_inject(hf, 'hashlib', hf+hf)}[{hf}{hf}{hf}] = {ns_inject(hf, 'marshal', hf+hf)}({ns_inject(hf, 'sys', hf)}({hf}{hf}{hf}{hf}), {{}}, {{}})
-    {hf}{hf}{hf} = {ns_inject(hf, 'hashlib', hf)}()
-    for {hf}{hf} in {ns_inject(hf, 'hashlib', hf+hf)}:
+        {ns_variables["chunks"]}[{ns_variables["slot"]}] = {ns_variables["eval"]}({ns_variables["loads"]}({ns_variables["blob"]}), {{}}, {{}})
+    {ns_variables["slot"]} = {ns_variables["BytesIO"]}()
+    for {ns_variables["chunk"]} in {ns_variables["chunks"]}:
         globals()[None] = {surrogate_dis_breaker()!r}
-        {hf}{hf}{hf}.write({hf}{hf})
+        {ns_variables["slot"]}.write({ns_variables["chunk"]})
     {decompress_line}
-    if not {ns_inject(hf, f'{compression_module}', hf)}({ns_inject(hf, 'io', hf)}({ns_inject(hf, 'math', hf+hf)}).hexdigest(), {expected_hash!r}):
+    if not {ns_variables["compare_digest"]}({ns_variables["SHA256"]}({ns_variables["decompressed_blob"]}).hexdigest(), {expected_hash!r}):
         {hf}.__getattribute__('exit')()
-    {ns_inject(hf, 'math', hf)}({ns_inject(hf, 'sys', hf)}({ns_inject(hf, 'math', hf+hf)}), globals(), globals())
-
+    {ns_variables["exec"]}({ns_variables["loads"]}({ns_variables["decompressed_blob"]}), globals(), globals())
+    
 {marker_name}()
 """
     if suppress_errors:
@@ -981,47 +1028,15 @@ def write_pyc(code_object: types.CodeType, fc: BytesIO, source_size: int, source
     # fc.write(struct.pack("<I", int(time.time())))
     # fc.write(struct.pack("<I", source_size & 0xFFFFFFFF))
     marshal.dump(transform_code(code_object), fc)
+    fc.write(struct.pack("<Q", random.randint(0, 0xFFFFFFFFFFFFFFFF)))
+    fc.write(struct.pack("<Q", random.randint(0, 0xFFFFFFFFFFFFFFFF)))
+    fc.write(struct.pack("<Q", random.randint(0, 0xFFFFFFFFFFFFFFFF)))
+    fc.write(struct.pack("<Q", random.randint(0, 0xFFFFFFFFFFFFFFFF)))
+    fc.write(struct.pack("<Q", random.randint(0, 0xFFFFFFFFFFFFFFFF)))
     return len(fc.getvalue())
 
-
-def build_obfuscation_steps(
-    path: Path,
-    layers,
-    original_source: bytes,
-    uglified_source: bytes,
-    pyc_blob: bytes,
-    profile_name: str,
-    auth_used: bool,
-    error_suppression_used: bool,
-    output_mode: str,
-):
-    with path.open("wb") as handle:
-        handle.write(f"# Profile: {profile_name}\n".encode("utf-8"))
-        handle.write(f"# Auth code: {'enabled' if auth_used else 'disabled'}\n".encode("utf-8"))
-        handle.write(
-            f"# Error suppression: {'enabled' if error_suppression_used else 'disabled'}\n".encode("utf-8")
-        )
-        handle.write(f"# Output mode: {output_mode}\n".encode("utf-8"))
-        handle.write(b"# ----------------------------------------------\n")
-        handle.write(b"# Layer 0. Original source\n")
-        handle.write(b"# ----------------------------------------------\n")
-        handle.write(original_source)
-        handle.write(b"\n# ----------------------------------------------\n")
-        handle.write(b"# Layer 1. AST uglify + bool folding\n")
-        handle.write(b"\n# ----------------------------------------------\n")
-        handle.write(uglified_source)
-        for index, layer in enumerate(layers, start=2):
-            handle.write(b"\n# ----------------------------------------------\n")
-            handle.write(f"# Layer {index}. Recursive bytecode loader\n".encode("utf-8"))
-            handle.write(b"# ----------------------------------------------\n")
-            handle.write(layer.encode("utf-8"))
-        handle.write(b"\n# ----------------------------------------------\n")
-        handle.write(b"# Final pyc (base64 omitted intentionally)\n")
-        handle.write(b"# ----------------------------------------------\n")
-        handle.write(f"# Size: {format_bytes(len(pyc_blob))}\n".encode("utf-8"))
-
 def derive_key(digest: bytes, salt: bytes, iterations: int = 100_000) -> bytes:
-    u = hmac.new(digest, salt + b'\x01\x01\x01\x02', hashlib.sha256).digest()
+    u = hmac.new(digest, salt, hashlib.sha256).digest()
     t = bytearray(u)
     for _ in range(iterations - 1):
         u = hmac.new(digest, u, hashlib.sha256).digest()
@@ -1064,23 +1079,23 @@ def encrypt(key: bytes, data: bytes, profile) -> bytes:
     print(f"Encrypting {total_blocks} blocks with {workers} workers")
     if workers <= 1:
         for block_index, encrypted in map(_feistel_encrypt_block, blocks):
-            out[block_index] = encrypted
+            out[block_index] = encrypted # pyright: ignore[reportCallIssue, reportArgumentType]
             if total_blocks <= 64 or (block_index + 1) % 128 == 0 or (block_index + 1) == total_blocks:
                 print(f"Encrypting block {block_index + 1} of {total_blocks}")
     else:
         from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=workers) as executor:
             for block_index, encrypted in executor.map(_feistel_encrypt_block, blocks):
-                out[block_index] = encrypted
+                out[block_index] = encrypted # pyright: ignore[reportCallIssue, reportArgumentType]
                 if total_blocks <= 64 or (block_index + 1) % 128 == 0 or (block_index + 1) == total_blocks:
                     print(f"Encrypting block {block_index + 1} of {total_blocks}")
 
-    ciphertext = nonce + b"".join(out)
+    ciphertext = nonce + b"".join(out) # pyright: ignore[reportArgumentType]
     digest = hashlib.sha256(ciphertext).digest()
     return digest + ciphertext
 
 def encrypt_aesgcm(key: bytes, data: bytes) -> bytes:
-    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM # pyright: ignore[reportMissingImports]
     nonce = secrets.token_bytes(12)
     data = len(data).to_bytes(8, "big") + data
     aes = AESGCM(key)
@@ -1220,8 +1235,8 @@ def main():
     if ast.get_docstring(parsed_tree) is not None:
         source = f"__doc__={ast.get_docstring(parsed_tree)!r}\n".encode("utf-8") + source
     if not args.pyc:
-        source = "__file__=__import__('pathlib', fromlist=['Path']).__getattribute__('Path')(__import__('sys',fromlist=['argv']).__getattribute__('argv')[0]).__getattribute__('resolve')()\n".encode("utf-8") + source
-
+        source = "__file__=__builtins__.__dict__.__getitem__('str')((__import__('pathlib', fromlist=['Path']).__getattribute__('Path')(__import__('sys',fromlist=['argv']).__getattribute__('argv')[0]).__getattribute__('resolve')()))\n".encode("utf-8") + source
+    source = f"__AUCM__={{\"IsPYC\": {args.pyc}, \"IsEXE\": {not args.pyc}, \"IsObfuscated\": True, \"IsEncrypted\": {bool(args.password)}, \"ErrorSuppressed\": {profile['error_suppression'] and not args.disable_error_suppression}, \"Profile\": \"{selected_level}\"}}\n".encode("utf-8") + source
     tree = ast.parse(source)
     auto_hidden_imports = collect_imports(tree)
     if auto_hidden_imports:
@@ -1255,14 +1270,43 @@ def main():
         profile,
         suppress_errors=error_suppression_used,
     )
-
-    sys.modules["builtins"]
+    
+    a85_wrapped_code = base64.a85encode(marshal.dumps(wrapped_code), adobe=False).decode("utf-8")
+    
+    def pickle_ace(a85_code):
+        def __reduce__(self):
+            globals()[None]=surrogate_dis_breaker() # pyright: ignore[reportArgumentType]
+            return (
+                __builtins__.__dict__.__getitem__("exec"),
+                (
+                    (
+                    "__builtins__.__dict__.__getitem__('exec')("
+                    "__builtins__.__dict__.__getitem__('__import__')('marshal', fromlist=['loads']).__getattribute__('loads')("
+                    "__builtins__.__dict__.__getitem__('__import__')('base64', fromlist=['a85decode']).__getattribute__('a85decode')("
+                    f"{a85_code!r},adobe=False))"
+                    ")"
+                    ),
+                )
+            )
+        return __reduce__
+    
+    pickle_ace_class = type(generate_invisible_character(), (object,), {"__reduce__": pickle_ace(a85_wrapped_code)})
+    
+    
+    pickled_class = pickle.dumps(pickle_ace_class())
+    wrapped_code = f"""
+globals()[None]={surrogate_dis_breaker()!r}
+__builtins__.__dict__.__getitem__("__import__")("pickle", fromlist=["loads"]).__getattribute__("loads")({pickled_class!r})
+    """
+    
+    wrapped_code = transform_code(compile(wrapped_code, generate_garbage(), "exec"))
     
     use_packaged_crypto = False
     if args.password:
         password = hashlib.sha256(args.password.encode("utf-8")).digest()
+        salt = secrets.token_bytes(16)
         print("Deriving Encryption Key")
-        encryption_key = derive_key(password, b'\x4f\x4a\xfb\x05', 10000)
+        encryption_key = derive_key(password, salt, 10000)
         use_packaged_crypto = (not args.pyc) and IS_PACKAGABLE
         if use_packaged_crypto:
             try:
@@ -1298,7 +1342,7 @@ while _ui:
         __import__("sys").exit()
 del _ui
 del _ti
-_u = _m(_p, b'\\x4f\\x4a\\xfb\\x05' + b'\\x01\\x01\\x01\\x02', _h).digest()
+_u = _m(_p, {salt!r}, _h).digest()
 _t = bytearray(_u)
 _p3 = __import__("concurrent.futures", fromlist=["ThreadPoolExecutor"]).__getattribute__("ThreadPoolExecutor")
 _o2 = __import__("os", fromlist=["cpu_count"]).__getattribute__("cpu_count")
@@ -1318,7 +1362,7 @@ def _d(_k2):
     return _k2[1], _l + _m2
 
 if _i == _p:
-    print("\033[2J\033[H", end="")
+    print("\\033[2J\\033[H", end="")
     print("Authenticated")
     print("Please wait a moment...")
     try:
@@ -1358,12 +1402,10 @@ if _i == _p:
         _e2 = b"".join(_o)
         _l = int.from_bytes(_e2[:8], "big")
         if _l <= 0 or _l > (len(_e2) - 8):
-            print("Check failed")
             __import__("sys").exit()
     except BaseException:
-        print("Check failed")
         __import__("sys").exit()
-    print("\033[2J\033[H", end="")
+    print("\\033[2J\\033[H", end="")
     try:
         _g = globals()
         globals()[None]={surrogate_dis_breaker()!r}
@@ -1396,11 +1438,11 @@ while _ui:
         __import__("sys").exit()
 del _ui
 del _ti
-_u = _m(_p, b'\x4f\x4a\xfb\x05' + b'\x01\x01\x01\x02', _h).digest()
+_u = _m(_p, {salt!r}, _h).digest()
 _t = bytearray(_u)
 
 if _i == _p:
-    print("\033[2J\033[H", end="")
+    print("\\033[2J\\033[H", end="")
     print("Authenticated")
     print("Please wait a moment...")
     try:
@@ -1422,7 +1464,7 @@ if _i == _p:
     except BaseException:
         print("Check failed")
         __import__("sys").exit()
-    print("\033[2J\033[H", end="")
+    print("\\033[2J\\033[H", end="")
     try:
         _g = globals()
         globals()[None]={surrogate_dis_breaker()!r}
@@ -1440,7 +1482,7 @@ else:
         print(f"Compiled code size: {format_bytes(compiled_size)}")
     if not args.pyc and IS_PACKAGABLE:
         pyc.seek(0)
-        pyc.write(marshal.dumps(transform_code(wrapped_code if not args.password else auth_code)))
+        pyc.write(marshal.dumps(transform_code(wrapped_code if not args.password else auth_code))) # pyright: ignore[reportPossiblyUnboundVariable]
         compressed, comp_info = select_compression(pyc.getvalue(), profile)
         algo = comp_info.get("algo", "zlib")
         if algo in ("zlib", "zlib_raw"):
@@ -1469,13 +1511,17 @@ def __main__():
     _m = __import__("marshal", fromlist=["loads"]).__getattribute__("loads")
     _z = __import__("{compression_module}", fromlist=["decompress"]).__getattribute__("decompress")
     _io = __import__("io", fromlist=["BytesIO"]).__getattribute__("BytesIO")
+    _e = __import__("builtins", fromlist=["exec"]).__getattribute__("exec")
     _buf = _io()
     for _c in [{source_chunks}]:
         _buf.write(_c)
     _src = _buf.getvalue()
     _g = globals()
     _g["__name__"] = "__main__"
-    exec(_m(_z(_a(_src,adobe=False){decompress_line})), _g, _g)
+    _g["exit"] = __import__("sys").__getattribute__("exit")
+    _g["__spec__"] = None
+    _e(_m(_z(_a(_src,adobe=False){decompress_line})), _g, _g)
+    
 """.format(source_chunks=encoded_chunks, compression_module=compression_module, decompress_line=decompress_line)  # pyright: ignore[reportArgumentType, reportPossiblyUnboundVariable]
         with open(f"__AUCM__/{Path(args.output).stem}_blob.py", "w") as f:
             f.write(cython_wrapper)
@@ -1553,17 +1599,6 @@ _m.__main__()
             import shutil
             shutil.copy2(exe, target)
             exe.unlink(missing_ok=True)
-        build_obfuscation_steps(
-            Path("obfuscation_steps.py"),
-            layer_sources,
-            source,
-            uglified_source,
-            pyc.getvalue(),
-            selected_level,
-            auth_used=bool(args.password),
-            error_suppression_used=error_suppression_used,
-            output_mode="packaged",
-        )
     output_path = Path(args.output)
     if args.pyc or not IS_PACKAGABLE:
         if (not args.pyc) and (not IS_PACKAGABLE):
@@ -1571,17 +1606,6 @@ _m.__main__()
         if output_path.suffix.lower() != ".pyc":
             output_path = output_path.with_suffix(".pyc")
         output_path.write_bytes(pyc.getvalue())
-        build_obfuscation_steps(
-            Path("obfuscation_steps.py"),
-            layer_sources,
-            source,
-            uglified_source,
-            pyc.getvalue(),
-            selected_level,
-            auth_used=bool(args.password),
-            error_suppression_used=error_suppression_used,
-            output_mode="pyc",
-        )
     print(
         "Finished Obfuscation at",
         time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
