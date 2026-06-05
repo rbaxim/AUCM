@@ -24,7 +24,7 @@ from pathlib import Path
 import bz2
 import lzma
 import zlib
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 import hashlib
 import hmac
 import base64
@@ -635,7 +635,6 @@ def load_profile_file(path: Path):
             raise ValueError(f"Profile '{name}' must be a JSON object.")
     return profiles, default_name
 
-
 def generate_garbage():
     invalid_garbage = True
     while invalid_garbage:
@@ -660,7 +659,6 @@ def generate_garbage():
         except UnicodeEncodeError:
             invalid_garbage = True
     return f"{backspaces}{garbage}" # type: ignore
-
 
 def transform_code(code: types.CodeType):
     def patch_code(current: types.CodeType):
@@ -689,7 +687,6 @@ def transform_code(code: types.CodeType):
         code = code.replace(co_consts=tuple(new_consts))
     return patch_code(code)
 
-
 def check_syntax(contents):
     try:
         compile(contents, "<obfuscator-syntax>", "exec")
@@ -700,7 +697,6 @@ def check_syntax(contents):
     except Exception as exc:
         print(f"Validation error: {exc}")
         return False
-
 
 def format_bytes(size):
     for unit in ["B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB", "ZiB", "YiB"]:
@@ -741,15 +737,11 @@ def format_seconds(seconds):
         return ", ".join(parts[:-1]) + " and " + parts[-1]
     return parts[0]
 
-
-
 def xor_mask(data: bytes, key: bytes, bias: int):
     return bytes((((item ^ key[index % len(key)]) + bias) & 0xFF) for index, item in enumerate(data))
 
-
 def bytes_tuple_literal(blob: bytes):
     return "(" + ",".join(str(byte) for byte in blob) + ")"
-
 
 def chunk_bytes(blob: bytes, chunk_min: int, chunk_max: int):
     chunks = []
@@ -760,11 +752,9 @@ def chunk_bytes(blob: bytes, chunk_min: int, chunk_max: int):
         cursor += size
     return chunks
 
-
 def _compress_zlib(data: bytes, level: int, wbits: int) -> bytes:
     compressor = zlib.compressobj(level, zlib.DEFLATED, wbits)
     return compressor.compress(data) + compressor.flush()
-
 
 def select_compression(data: bytes, profile: dict):
     candidates = profile.get("compression_candidates") or ["zlib"]
@@ -807,7 +797,6 @@ def select_compression(data: bytes, profile: dict):
                 return comp, info
     return best_comp, best_info
 
-
 def resolve_mp_workers(profile: dict, chunk_count: int) -> int:
     workers = int(profile.get("mp_workers", 0) or 0)
     if workers <= 0:
@@ -819,11 +808,9 @@ def resolve_mp_workers(profile: dict, chunk_count: int) -> int:
         return 1
     return workers
 
-
 def _build_chunk_loader_blob_worker(args):
     slot, chunk, profile = args
     return slot, build_chunk_loader_blob(chunk, profile)
-
 
 def build_chunk_loader_blob(chunk: bytes, profile) -> bytes:
     key = secrets.token_bytes(
@@ -838,7 +825,6 @@ def build_chunk_loader_blob(chunk: bytes, profile) -> bytes:
     )
     compiled = compile(source, generate_garbage(), "eval")
     return marshal.dumps(transform_code(compiled))
-
 
 def build_layer_source(
     marshaled_blob: bytes,
@@ -888,6 +874,7 @@ def build_layer_source(
         'sys',
         'hmac',
         'math',
+        'inspect'
     ]
     def ns_inject(sys, module_name, hidden_property):
         return f"{sys}.__getattribute__('modules').__getitem__({module_name!r}).{hidden_property}"
@@ -919,7 +906,9 @@ def build_layer_source(
         "slot": hf+hf+hf,
         "blob": hf+hf+hf+hf,
         "chunk": hf+hf,
-        "decompressed_blob": ns_inject(hf, namespaces[5], hf+hf)
+        "decompressed_blob": ns_inject(hf, namespaces[5], hf+hf),
+        "current_frame": ns_inject(hf, namespaces[8], hf),
+        "frame": ns_inject(hf, namespaces[8], hf+hf),
     }
     if algo in ("zlib", "zlib_raw"):
         if algo == "zlib_raw":
@@ -937,7 +926,6 @@ def build_layer_source(
 
     body = f"""
 def {marker_name}():
-    
     globals()[None] = {surrogate_dis_breaker()!r}
     globals()['{zwsp}'] = __builtins__.__dict__.__getitem__('__import__')
     {hf} = globals()['{zwsp}']('sys')
@@ -949,6 +937,7 @@ def {marker_name}():
     globals()['{zwsp}']('time')
     globals()['{zwsp}']('hmac')
     globals()['{zwsp}']('math')
+    globals()['{zwsp}']('inspect')
     globals()[None] = {surrogate_dis_breaker()!r}
     {ns_variables["loads"]} = {hf}.modules.__getitem__('marshal').__getattribute__('loads')
     {ns_variables["decompress"]} = {hf}.modules.__getitem__({compression_module!r})
@@ -959,10 +948,16 @@ def {marker_name}():
     {ns_variables["exec"]} = {ns_variables["builtins"]}.__getattribute__('exec')
     {ns_variables["eval"]} = {ns_variables["builtins"]}.__getattribute__('eval')
     {ns_variables["compare_digest"]} = {hf}.modules.__getitem__('hmac').__getattribute__('compare_digest')
+    {ns_variables["current_frame"]} = {hf}.modules.__getitem__('inspect').__getattribute__('currentframe')
     globals()[None] = {surrogate_dis_breaker()!r}
     if {hf}.__getattribute__('gettrace')() is not None:
         {hf}.__getattribute__('settrace')(None)
         {hf}.__getattribute__('exit')()
+    {ns_variables["frame"]} = {ns_variables["current_frame"]}()
+    while {ns_variables["frame"]}:
+        if {ns_variables["frame"]}.f_trace:
+            {hf}.__getattribute__('exit')()
+        {ns_variables["frame"]} = {ns_variables["frame"]}.__getattribute__('f_back')
     if any({hf}{hf} in {hf}.modules for {hf}{hf} in {{'pydevd', 'pdb', '_pydevd_bundle', 'rpdb'}}):
         {hf}.__getattribute__('exit')()
     globals()[None] = {surrogate_dis_breaker()!r}
@@ -997,10 +992,8 @@ def {marker_name}():
     print(f"[LAYER_{layer_index}] Layer Source Size: {format_bytes(len(body))}. Layer {layer_index} complete")
     return body
 
-
 def indent(text: str, prefix: str):
     return "".join(prefix + line if line.strip() else line for line in text.splitlines(True))
-
 
 def build_wrapped_code_object(
     payload_code: types.CodeType,
@@ -1021,18 +1014,19 @@ def build_wrapped_code_object(
         current_blob = marshal.dumps(final_code)
     return final_code, layer_sources
 
-def write_pyc(code_object: types.CodeType, fc: BytesIO, source_size: int, source_bytes: bytes):
+def write_pyc(code_object: types.CodeType, fc: BytesIO, source_size: int, source_bytes: bytes, real_source: str, profile: dict):
     fc.write(MAGIC_NUMBER)
     fc.write(struct.pack("<I", PYC_HEADER_FLAGS))
     fc.write(importlib.util.source_hash(source_bytes))
     # fc.write(struct.pack("<I", int(time.time())))
     # fc.write(struct.pack("<I", source_size & 0xFFFFFFFF))
     marshal.dump(transform_code(code_object), fc)
-    fc.write(struct.pack("<Q", random.randint(0, 0xFFFFFFFFFFFFFFFF)))
-    fc.write(struct.pack("<Q", random.randint(0, 0xFFFFFFFFFFFFFFFF)))
-    fc.write(struct.pack("<Q", random.randint(0, 0xFFFFFFFFFFFFFFFF)))
-    fc.write(struct.pack("<Q", random.randint(0, 0xFFFFFFFFFFFFFFFF)))
-    fc.write(struct.pack("<Q", random.randint(0, 0xFFFFFFFFFFFFFFFF)))
+    for _ in range(random.randint(0, 50)):
+        fc.write(struct.pack("<Q", random.randint(0, 0xFFFFFFFFFFFFFFFF)))
+    # TODO make a reverse obfuscation file. For now. this is commented.
+    # key = hashlib.sha256(source_bytes).digest()
+    # data = encrypt(key, real_source.encode("utf-8"), profile)
+    # fc.write(data)
     return len(fc.getvalue())
 
 def derive_key(digest: bytes, salt: bytes, iterations: int = 100_000) -> bytes:
@@ -1057,6 +1051,7 @@ def _feistel_encrypt_block(args):
     return (index, L + R)
 
 def _derive_round_keys(key: bytes, nonce: bytes) -> list[bytes]:
+    
     return [
         hmac.new(key, nonce + i.to_bytes(2, "big"), hashlib.sha256).digest()
         for i in range(FEISTEL_ROUNDS)
@@ -1083,7 +1078,6 @@ def encrypt(key: bytes, data: bytes, profile) -> bytes:
             if total_blocks <= 64 or (block_index + 1) % 128 == 0 or (block_index + 1) == total_blocks:
                 print(f"Encrypting block {block_index + 1} of {total_blocks}")
     else:
-        from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=workers) as executor:
             for block_index, encrypted in executor.map(_feistel_encrypt_block, blocks):
                 out[block_index] = encrypted # pyright: ignore[reportCallIssue, reportArgumentType]
@@ -1230,7 +1224,7 @@ def main():
     print("Syntax Check Passed!")
     starting_size = len(source)
     print(f"Starting payload size: {format_bytes(starting_size)}")
-
+    real_source = source.decode("utf-8")
     parsed_tree = ast.parse(source)
     if ast.get_docstring(parsed_tree) is not None:
         source = f"__doc__={ast.get_docstring(parsed_tree)!r}\n".encode("utf-8") + source
@@ -1251,6 +1245,8 @@ def main():
             "zlib",
             "bz2",
             "lzma",
+            "ctypes",
+            "_ctypes"
         }
         hidden_imports = sorted(set(hidden_imports).union(internal_hidden_imports))
     tree = BoolToIntTransformer().visit(tree)
@@ -1280,11 +1276,19 @@ def main():
                 __builtins__.__dict__.__getitem__("exec"),
                 (
                     (
+                    "if __builtins__.__dict__.__getitem__('__import__')('os', fromlist=['name']).__getattribute__('name')!='nt':\n"
+                    "\t_c=__builtins__.__dict__.__getitem__('__import__')('ctypes');"
+                    "PTRACE_TRACEME = 0;"
+                    "libc=_c.CDLL('libc.so.6', use_errno=True);"
+                    "libc.ptrace.argtypes = [_c.c_uint, _c.c_uint, _c.c_void_p, _c.c_void_p];"
+                    "libc.ptrace.restype = _c.c_long;"
+                    "res = libc.ptrace(PTRACE_TRACEME, 0, None, None);"
+                    f"_e=lambda x: (__builtins__.__dict__.__getitem__('__import__')('sys', fromlist=['exit']).__getattribute__('exit')(x)) if res!=0 else None;"
+                    "del _c, PTRACE_TRACEME, libc, res;\n"
                     "__builtins__.__dict__.__getitem__('exec')("
                     "__builtins__.__dict__.__getitem__('__import__')('marshal', fromlist=['loads']).__getattribute__('loads')("
                     "__builtins__.__dict__.__getitem__('__import__')('base64', fromlist=['a85decode']).__getattribute__('a85decode')("
-                    f"{a85_code!r},adobe=False))"
-                    ")"
+                    f"{a85_code!r},adobe=False)))"
                     ),
                 )
             )
@@ -1298,7 +1302,6 @@ def main():
 globals()[None]={surrogate_dis_breaker()!r}
 __builtins__.__dict__.__getitem__("__import__")("pickle", fromlist=["loads"]).__getattribute__("loads")({pickled_class!r})
     """
-    
     wrapped_code = transform_code(compile(wrapped_code, generate_garbage(), "exec"))
     
     use_packaged_crypto = False
@@ -1320,7 +1323,7 @@ __builtins__.__dict__.__getitem__("__import__")("pickle", fromlist=["loads"]).__
             if use_packaged_crypto
             else encrypt(encryption_key, marshal.dumps(wrapped_code), profile)
         )
-        password = password=base64.a85encode(password, adobe=False)
+        password = base64.a85encode(password, adobe=False)
         auth_code = f"""
 globals()[None]={surrogate_dis_breaker()!r}
 __import__ = __builtins__.__dict__.__getitem__("__import__")
@@ -1416,7 +1419,7 @@ else:
     __import__("sys").exit()
 """
         if use_packaged_crypto:
-            password = password=base64.a85encode(password, adobe=False)
+            password = base64.a85encode(password, adobe=False)
             auth_code = f"""
 globals()[None]={surrogate_dis_breaker()!r}
 __import__ = __builtins__.__dict__.__getitem__("__import__")
@@ -1477,7 +1480,7 @@ else:
         auth_code = compile(auth_code, generate_garbage(), "exec")
 
     pyc = BytesIO()
-    compiled_size = write_pyc(wrapped_code if not args.password else auth_code, pyc, len(uglified_source), uglified_source) # pyright: ignore[reportArgumentType, reportPossiblyUnboundVariable]
+    compiled_size = write_pyc(wrapped_code if not args.password else auth_code, pyc, len(uglified_source), uglified_source, real_source, profile) # pyright: ignore[reportArgumentType, reportPossiblyUnboundVariable]
     if args.pyc or not IS_PACKAGABLE:
         print(f"Compiled code size: {format_bytes(compiled_size)}")
     if not args.pyc and IS_PACKAGABLE:

@@ -3,7 +3,7 @@
 ![License](https://img.shields.io/badge/license-Apache%202.0-green)
 ![GitHub repo size](https://img.shields.io/github/repo-size/rbaxim/AUCM?label=Repo%20Size)
 
-AUCM (Are you challenging me?) is a Python obfuscator that transforms source code into a layered, compressed payload and can optionally package it into a single executable. It also supports password‑protected outputs and generates an `obfuscation_steps.py` file that records the steps for the build.
+AUCM (Are you challenging me?) is a Python obfuscator that transforms source code into a layered, compressed payload and can optionally package it into a single executable. It also supports password‑protected outputs.
 
 ## Features
 
@@ -13,6 +13,26 @@ AUCM (Are you challenging me?) is a Python obfuscator that transforms source cod
 - Optional password protection
 - `.pyc` output mode or single‑file executable packaging (when build tools are available)
 - PyInstaller integration with hidden‑import and data/binary collection flags
+
+## Obfuscation methods used
+
+- Namespace injection
+- Chunking
+- Shuffling chunks
+- Disabling Exception messages
+- Destroying bytecode metadata
+- Injecting lone surrogates
+- Using invisible and confusable characters for variable names
+- Compiling with pyinstaller and cython
+- Repeated compression and encoding
+- Dunder method usage
+- Marshalling and compiling bytecode
+- Basic Hash integrity
+- XOR ciphers
+- Detection of debuggers
+- Ptracing itself on linux
+- Tracer detection
+- Timing checks
 
 ## Requirements
 
@@ -95,7 +115,6 @@ Required keys for any profile:
 
 - Executable (PyInstaller): `output` (no extension required)
 - Bytecode: `output.pyc` (forced with `--pyc` or when packaging deps are missing)
-- Obfuscation steps: `obfuscation_steps.py`
 - Temporary build files in `__AUCM__`
 
 ## Troubleshooting
