@@ -31,4 +31,4 @@ Out of scope:
 
 ## Disclosure Timeline
 
-We aim to acknowledge reports within 7 days and provide a fix or mitigation plan within 30 days, depending on severity.
+I am a single person. I am not fast.
